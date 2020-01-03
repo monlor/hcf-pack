@@ -1,0 +1,545 @@
+#!/bin/bash 
+# copyright by qianjun.gong
+# script version: 1.4
+# 【建议采用环境变量的方式修改配置，而不建议修改脚本内容】
+
+# 使用方式 ./push [dev/uat/prod]，如果当前分支有修改会自动存到stash暂存区
+# 镜像tag规则：tag-环境-当前小时，如v1.5.0-dev-19082010
+# 缓存区保存名称规则：当前分支-当前分钟，如dev-latest-1908201005
+# 前端发布需要添加服务器ssh-key，或者手动输入服务器密码
+# 20191128: 前端编译时区分环境更新路由信息
+# 20191210: 支持【packhcf 分支名 [环境]】打包代码，不输入环境会识别分支名中的环境标识
+# 20191220: 优化代码结构，支持rancher升级[mac安装依赖 brew install kubectl rancher-cli]，支持缓存
+# 20191225: 现在不输入镜像名称，下次也不会提示你输入，工作负载名称输入错误，会提示重新输入
+# 20191225: 支持使用用户环境变量覆盖脚本中的变量值
+# 20191230: 现在通过项目环境变量文件来配置环境信息，脚本升级更方便，支持多项目。【推荐将脚本加入系统环境变量】
+# 20200102: 1.现在环境变量不配置在脚本里，第一次启动会自动生成配置模板 2.脚本支持rancher自动升级，将skip_verify变量设置为true后，全程发布无需手动确认 3. 支持变量缓存
+
+# 脚本初始化
+#========================================
+# 脚本缓存目录，可通过配置用户或系统环境变量的方式修改
+project_env_dir=${project_env_dir:-~/.project}
+# 判断是否为git项目
+git status &> /dev/null || (echo "请在项目文件夹中执行脚本！" && exit 1)
+# 获取项目组名称，组与子组之间采用下划线分隔
+git_remote_url=$(git remote -v | grep "(push)" | grep "^origin" | awk '{print $2}')
+project_name=$(echo $git_remote_url | awk -F '/' '{print$NF}' | sed -e 's/.git//g')
+project_group_name=$(echo $git_remote_url | grep -Eo '[:/]([^./]+/){1,}' | sed -e 's/^[:/]//' -e 's/\/$//')
+# 初始化脚本缓存目录
+[ ! -d "${project_env_dir}/${project_group_name/\//_}" ] && mkdir -p "${project_env_dir}/${project_group_name/\//_}"
+# 缓存文件
+cache_file=${project_env_dir}/${project_group_name/\//_}/$(basename ${0}).cache
+# 项目环境变量
+project_env_file=${project_env_dir}/${project_group_name/\//_}/$(basename ${0}).env
+# 加载项目环境变量
+[ -f "${project_env_file}" ] && source "${project_env_file}"
+#========================================
+
+if [ ! -f "${project_env_file}" -o -z "`cat "${project_env_file}" 2> /dev/null | grep "= packhcf ="`" ]; then
+	echo "未检测到脚本环境变量，请修改配置文件: ${project_env_file}"
+	cat >> "${project_env_file}" << EOF
+#============== packhcf ==============
+tag=v1.5.0
+
+# 后端打包基础镜像
+base_image=
+
+dev_branch=dev-latest
+uat_branch=release-latest
+prod_branch=master-latest
+
+dev_server=11.11.11.11:4000
+dev_username=
+dev_password=
+dev_over_http=
+
+uat_server=11.11.11.11:4000
+uat_username=
+uat_password=
+uat_over_http=
+
+prod_server=11.11.11.11:4000
+prod_username=
+prod_password=
+prod_over_http=
+
+# 后端仓库额外路径，如/docker
+registry_extra_path=
+
+# 远程打包信息
+front_server_address=11.11.11.11
+front_server_user=root
+front_server_dir=/home/web-front/\$(date +%y%m%d%H%M)
+
+dev_rancher_url=
+dev_rancher_token=
+# 可不定义，通过手动选择
+dev_rancher_project_id=
+dev_rancher_namespace=default
+
+uat_rancher_url=
+uat_rancher_token=
+# 可不定义，通过手动选择
+uat_rancher_project_id=
+uat_rancher_namespace=default
+
+prod_rancher_url=
+prod_rancher_token=
+# 可不定义，通过手动选择
+prod_rancher_project_id=
+prod_rancher_namespace=default
+
+# 前端
+front_module_name=front
+front_local_dirname=dist
+# 自定义前端编译命令
+# front_build_cmd="npm run build-script"
+# docker pack script
+front_docker_files="./Dockerfile ./docker"
+# 本地打包目录，不建议设置为前端项目目录
+front_local_pack_dir=${front_local_pack_dir:-~/build}
+# 跳过确认步骤
+# skip_verify=false
+
+# function on_finally() {
+
+# 	if [ -f config/config.js.packing ]; then
+# 		mv -f config/config.js.packing config/config.js
+# 	fi
+
+# }
+
+# function on_front_build() {
+
+# 	# 复制config文件 for hcf
+# 	if [ -f config/config.js ]; then
+# 		cp config/config.js config/config.js.packing
+# 	fi
+# 	cp -rf config/config.copy.js config/config.js
+# 	node update-router --env="${environment}"
+
+# }
+#============== packhcf ==============
+EOF
+	exit 1
+fi
+
+# 可配置区域
+############################################
+# 推送latest标签
+push_latest_tag=${push_latest_tag:-false}
+# rancher 
+rancher_deploy=${rancher_deploy:-true}
+# 跳过确认操作，取默认值
+skip_verify=${skip_verify:-false}
+# 打包方式[server/local]，server在服务器上打包，local在本地打包
+front_pack_method=${front_pack_method:-server}
+
+############################################
+
+arg1=${1}
+arg2=${2}
+environment=${arg1}
+# 当前时间
+now=`date +%Y%m%d%H%M`
+# 当前分支
+now_branch=`git branch 2> /dev/null | awk '/^\*/{print$2}'`
+# 根据时间设置暂存区名称
+stash_save_name=${now_branch}-`date +%Y%m%d%H%M`
+# 是否暂存，1为否
+stash_saved=1
+# 镜像版本
+version=${tag}-${environment}-${now}
+# 镜像仓库地址
+server=""     
+# 镜像仓库用户
+username=""	  
+# 镜像仓库密码
+password=""   
+# 镜像仓库是否用http
+over_http=""  
+# 镜像全名
+image_full_name="" 
+rancher_token=""
+rancher_url=""
+rancher_project_id=""
+rancher_namespace=""
+artifact_id=""
+
+# 通过传入一个字符串，取变量名称等于该字符串的变量值
+function parseStr() {
+
+	[ -z "${1}" ] && echo -n "" || eval echo -n '$'"${1}"
+
+}
+
+function parseVariables() {
+
+	case "$arg1" in
+	    "dev"|"uat"|"prod") 	
+			base_branch=`eval echo '$'"${environment}_branch"`
+			;;
+	    *)
+			[ -n "$arg1" -a "$arg1" != "now" ] && base_branch="$arg1" || base_branch=${now_branch}
+			if [ -n "$arg2" ]; then
+				environment="$arg2" 
+			else
+				if [ -n "`echo ${base_branch} | grep "${dev_branch}"`" ]; then
+					environment="dev"
+				elif [ -n "`echo ${base_branch} | grep "${uat_branch}"`" ]; then
+					environment="uat"
+				elif [ -n "`echo ${base_branch} | grep "${prod_branch}"`" ]; then
+					environment="prod"
+				else 
+					environment="dev"
+				fi
+			fi
+			version=${tag}-${environment}-${now}
+	    	;;
+	esac	
+
+	server=`parseStr "${environment}_server"`
+	username=`parseStr "${environment}_username"`
+	password=`parseStr "${environment}_password"`
+	over_http=`parseStr "${environment}_over_http"`
+	rancher_token=`parseStr "${environment}_rancher_token"`
+	rancher_url=`parseStr "${environment}_rancher_url"`
+	rancher_project_id=`parseStr "${environment}_rancher_project_id"`
+	rancher_namespace=`parseStr "${environment}_rancher_namespace"`
+
+}
+
+# 解析pom
+function getXmlValue() {
+
+	echo "`cat "$1" | grep "<$2>" | head -1 | sed -E "s/(<$2>)(.*)(<\/$2>)/\2/" | tr -d '\r' | tr -d '\t' | sed -e 's/ //g'`"
+
+}
+
+function getFullImageName() {
+
+	# 获取镜像全名，前端取前端模块名称，后端取artifactId
+	if [ "${project_name}" = "${front_module_name}" ]; then
+		# artifact_id="${front_module_name}"
+		image_full_name=${server}${registry_extra_path}/${front_module_name}
+	else
+		artifact_id="$(getXmlValue ./pom.xml artifactId)"
+		[ -z "${artifact_id}" ] && echo "获取artifactId失败！" && exit 1
+		image_full_name=${server}${registry_extra_path}/${artifact_id}
+	fi
+
+}
+
+function prepare() {
+
+	clear
+	echo "开始打包发布镜像到${environment:-dev}镜像库..."
+	sleep 1
+
+	if [ "${base_branch}" != "${now_branch}" ]; then
+
+		git stash save ${stash_save_name}
+		[ $? -ne 0 ] && echo "暂存代码失败！" && exit 1
+		if git stash list | grep "${stash_save_name}" &> /dev/null; then 
+			stash_saved=0
+			echo "未提交的代码已放入暂存区${stash_save_name}..."
+		fi
+
+		echo "fetch并切换到${base_branch}分支..."
+		git fetch origin ${base_branch}
+		git checkout ${base_branch}
+
+	fi
+
+	echo "更新${base_branch}分支代码..."
+	git pull origin ${base_branch} --no-edit
+
+	cat << EOF
+======= 配置信息 =======
+当前模块: ${project_name}
+当前分支: ${now_branch}
+打包分支: ${base_branch}
+镜像库地址: ${server}
+镜像库用户: ${username}
+使用http: ${over_http}
+=======================
+EOF
+	if [ "${skip_verify}" != "true" ]; then
+		echo -n "5秒后开始打包发布"
+		for i in `seq 1 5`; do 
+			printf '.' 
+			sleep 1 
+		done
+		echo
+	fi
+
+}
+
+function cache() {
+
+	flag="${environment}-${project_name}"
+	key="$2"
+	value="$3"
+	[ ! -f "${cache_file}" ] && touch "${cache_file}"
+	[ -z "${key}" ] && return
+
+	case "$1" in
+	"set") 
+		if [ `uname -o` = "Darwin" ]; then
+			sed -i "" "/^${flag}:${key}/d" "${cache_file}"
+		else
+			sed -i "/^${flag}:${key}/d" "${cache_file}"
+		fi
+		echo "${flag}:${key}:${value}" >> "${cache_file}"
+		;;
+	"get")
+		line="$(cat "${cache_file}" | grep "${flag}:${key}")"
+		echo -n "$(echo "${line}" | cut -d':' -f3)"
+		;;
+	"del")
+		if [ `uname -o` = "Darwin" ]; then
+			sed -i "" "/^${flag}:${key}/d" "${cache_file}"
+		else
+			sed -i "/^${flag}:${key}/d" "${cache_file}"
+		fi
+		;;
+	esac
+
+}
+
+function upgrade_service() {
+
+	# Rancher升级
+	[ "${rancher_deploy}" != "true" ] && return
+
+	echo "开始升级工作负载..."
+
+	[ "${skip_verify}" = "false" ] && read -p "是否升级${environment}工作负载？[y/n]: " res || res="y"
+
+	if [ "$res" = "y" ]; then
+		hash rancher 2> /dev/null || (echo "未安装rancher-cli！" && return)
+		hash kubectl 2> /dev/null || (echo "未安装kubectl！" && return)
+
+		[ -z "${rancher_url}" ] && echo "rancher地址未配置！" && return
+
+		if [ -n "${rancher_project_id}" ]; then
+			rancher login "${rancher_url}" --token "${rancher_token}" --skip-verify --name "${environment}" --context "${rancher_project_id}"
+		else
+			echo "=== 请选择工作负载所在的项目 ==="
+			rancher login "${rancher_url}" --token "${rancher_token}" --skip-verify --name "${environment}"
+		fi
+		# 获取工作负载名称
+		workload=$(cache get workload)
+		while true; do
+			if [ -z "${workload}" ]; then
+				echo "> 默认工作负载名称：${project_name}"
+				read -p "请输入Rancher中的工作负载名称：" workload
+				[ -z "$workload" ] && workload=${project_name}
+				if [ -z "$(rancher kubectl get deploy -n "${rancher_namespace}" | grep -E "^${workload} ")" ]; then
+					echo "> 在命名空间${rancher_namespace}中未找到工作负载${workload}！"
+					# 未找到工作负载，重新输入
+					workload=""
+					continue
+				fi
+				cache set workload "${workload}"
+				workload_is_set="1"
+			else
+				break
+			fi
+		done
+		# 获取镜像名称
+		image_name=$(cache get image_name)
+		if [ -z "${image_name}" ]; then
+			echo "> 默认镜像名称：${image_full_name}"
+			read -p "手动输入镜像名称[不带tag][不输入则自动拼接]：" image_name
+			if [ -n "${image_name}" ]; then
+				image_full_name="${image_name}"
+				cache set image_name "${image_name}"
+			else
+				# 输入为空则让工作负载每次都自动获取
+				echo "> 镜像名称设置为自动识别，以后不再提醒！"
+				cache set image_name auto
+			fi
+			image_name_is_set="1"
+		elif [ "${image_name}" != "auto" ]; then
+			image_full_name="${image_name}"
+		fi
+		cat << EOF
+======= 升级信息 =======
+服务端地址: ${environment}-${rancher_url}
+命名空间: ${rancher_namespace}
+工作负载: ${workload}
+镜像名称: ${image_full_name}
+镜像版本: ${version}
+=======================
+EOF
+		local rancher_up_status=0
+		rancher kubectl set image deploy "${workload}" "${workload}"="${image_full_name}":"${version}" -n "${rancher_namespace}"
+		rancher_up_status=$?
+		rancher kubectl rollout status deploy "${workload}" -n "${rancher_namespace}" 
+		rancher_up_status=$?
+		if [ "${rancher_up_status}" -ne 0 ]; then
+			echo "升级工作负载异常！"
+			# 升级失败则清除缓存
+			[ "${workload_is_set}" = "1" ] && cache del workload
+			[ "${image_name_is_set}" = "1" ] && cache del image_name
+		fi
+	fi
+
+}
+
+function finally() {
+
+	echo "还原分支中..."
+	
+	if [ "${now_branch}" != "${base_branch}" ]; then
+		git checkout ${now_branch}
+		if [ "${stash_saved}" -eq 0 ]; then
+			echo "恢复暂存区${stash_save_name}代码..."
+			stash_save_code=$(git stash list | grep "${stash_save_name}" | cut -d':' -f1)
+			if [ -z "${stash_save_code}" ]; then
+				echo "暂存区代码未找到！"
+			else
+				git stash apply "${stash_save_code}"
+			fi
+		fi
+	fi
+	hash on_finally &> /dev/null && on_finally
+	echo "push tag: $version"
+
+}
+
+function front_build() {
+
+	echo "本地编译代码..."
+	
+	hash on_front_build &> /dev/null && on_front_build
+	# 先删除以前的编译文件
+	# [ -n "${front_local_dirname}" -a -d "${front_local_dirname}" ] && rm -rf "${front_local_dirname}"
+	[ -n "${front_build_cmd}" ] && eval "${front_build_cmd}" &> /dev/null || npm run build &> /dev/null
+	[ $? -ne 0 ] && echo "代码编译失败，停止发布！" && finally && exit 1
+
+}
+
+function front_local_push() {
+
+	echo "开始本地发布镜像..."
+	hash docker 2> /dev/null || (echo "检测到Docker程序未安装！" && finally && exit 1)
+	if [ -z "${front_local_pack_dir}" -o ! -d "${front_local_pack_dir}" ]; then
+		echo "请配置或创建本地打包目录！"
+		finally && exit 1
+	elif [ "${front_local_pack_dir}" != "." -a "${front_local_pack_dir}" != "./" ]; then
+		[ ! -d "${front_local_pack_dir}" ] && mkdir -p ${front_local_pack_dir}
+		mv -f ${front_local_pack_dir}/${front_local_dirname} ${front_local_pack_dir}/${front_local_dirname}.bak &> /dev/null
+		cp -r ${front_local_dirname} ${front_local_pack_dir}
+		cp -r ${front_docker_files} ${front_local_pack_dir}
+	fi
+	docker login ${server} -u ${username} -p ${password}
+	docker build -t ${image_full_name}:${version} ${front_local_pack_dir}
+	docker push ${image_full_name}:${version}
+	if [ "${push_latest_tag}" = "true" ]; then
+		docker tag ${image_full_name}:${version} ${image_full_name}:latest
+		docker push ${image_full_name}:latest
+	fi
+	[ $? -ne 0 ] && echo "代码打包或发布异常！" && finally && exit 1
+
+}
+
+function front_online_push() {
+
+	echo "开始远程服务器发布镜像..."
+	echo "> 请注意定时清除远程服务器上用于发布镜像的临时目录！"
+	# 创建临时文件夹打包镜像
+	ssh ${front_server_user}@${front_server_address} \
+		"mkdir -p ${front_server_dir}"
+
+	echo "上传docker打包文件..."
+	scp -r ${front_docker_files} ${front_server_user}@${front_server_address}:${front_server_dir} > /dev/null
+	echo "上传前端代码中..."
+	local front_local_basename="$(basename ${front_local_dirname})"
+	tar zcvf ${front_local_basename}.tar.gz -C ${front_local_dirname} . &> /dev/null
+	[ $? -ne 0 ] && echo "前端代码压缩失败！" && finally && exit 1
+	scp -r ${front_local_basename}.tar.gz ${front_server_user}@${front_server_address}:${front_server_dir} > /dev/null
+	[ $? -ne 0 ] && echo "代码上传失败，停止发布！" && finally && exit 1
+	ssh ${front_server_user}@${front_server_address} \
+		"cd ${front_server_dir} && \
+		mkdir ${front_local_basename} && \
+		tar zxvf ${front_local_basename}.tar.gz -C ${front_local_basename} &> /dev/null"
+
+	ssh ${front_server_user}@${front_server_address} \
+		"docker login ${server} -u ${username} -p ${password} && \
+		docker build -t ${image_full_name}:${version} ${front_server_dir} && \
+		docker push ${image_full_name}:${version}"
+	[ $? -ne 0 ] && echo "代码发布异常！" && finally && exit 1
+	if [ "${push_latest_tag}" = "true" ]; then
+		ssh ${front_server_user}@${front_server_address} \
+			"docker tag ${image_full_name}:${version} ${image_full_name}:latest && \
+			docker push ${image_full_name}:latest"
+	fi
+
+}
+
+function spring_boot_push() {
+
+	echo "本地编译代码并发布镜像..."
+	local build_result=0
+	#jib:dockerBuild 可使用本地docker编译，不发布到远程镜像库
+	# mvn dependency:resolve -U > /dev/null
+	mvn compile jib:build -Dbase_image="${base_image}" \
+		-Dregistry_url="${server}" \
+		-Dregistry_username="${username}" \
+		-Dregistry_password="${password}" \
+		-Dimage_tag="${version}" \
+		-DsendCredentialsOverHttp="${over_http}"
+	build_result=$?
+	if [ "${push_latest_tag}" = "true" ]; then
+		mvn compile jib:build -Dbase_image="${base_image}" \
+			-Dregistry_url="${server}" \
+			-Dregistry_username="${username}" \
+			-Dregistry_password="${password}" \
+			-Dimage_tag="latest" \
+			-DsendCredentialsOverHttp="${over_http}"
+		build_result=$?
+	fi
+	[ "${build_result}" -ne 0 ] && echo "代码编译失败，停止发布！" && finally && exit 1
+
+}
+
+
+function auto_build_and_push() {
+
+	echo "开始编译并上传${project_name}镜像..."
+	if [ "${project_name}" = "${front_module_name}" ]; then
+		front_build
+		if [ "${front_pack_method}" = "server" ]; then
+			front_online_push
+		elif [ "${front_pack_method}" = "local" ]; then
+			front_local_push
+		else 
+			echo "前端打包方式配置错误！" && finally && exit 1
+		fi
+	else 
+		spring_boot_push
+	fi
+
+	finally
+
+}
+
+function main_process() {
+
+	parseVariables
+
+	getFullImageName
+
+	prepare
+
+	auto_build_and_push
+
+	upgrade_service
+
+}
+
+main_process
+
+exit 0
