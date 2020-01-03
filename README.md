@@ -1,8 +1,9 @@
 ### Install 
 
-1. brew tap monlor/taps
-2. brew install hcf-pack
-
+```
+$ brew tap monlor/taps
+$ brew install hcf-pack
+```
 
 ### How to use
 
