@@ -1,10 +1,10 @@
 #!/bin/bash 
 # copyright by qianjun.gong
-# script version: 1.4
+# script version: 1.5
 # 【建议采用环境变量的方式修改配置，而不建议修改脚本内容】
 
 # 使用方式 ./push [dev/uat/prod]，如果当前分支有修改会自动存到stash暂存区
-# 镜像tag规则：tag-环境-当前小时，如v1.5.0-dev-19082010
+# 镜像tag规则：tag-环境-当前时间，如v1.5.0-dev-1908201001
 # 缓存区保存名称规则：当前分支-当前分钟，如dev-latest-1908201005
 # 前端发布需要添加服务器ssh-key，或者手动输入服务器密码
 # 20191128: 前端编译时区分环境更新路由信息
@@ -20,7 +20,7 @@
 # 脚本缓存目录，可通过配置用户或系统环境变量的方式修改
 project_env_dir=${project_env_dir:-~/.project}
 # 判断是否为git项目
-git status &> /dev/null || (echo "请在项目文件夹中执行脚本！" && exit 1)
+! git status &> /dev/null && echo "请在项目文件夹中执行脚本！" && exit 1
 # 获取项目组名称，组与子组之间采用下划线分隔
 git_remote_url=$(git remote -v | grep "(push)" | grep "^origin" | awk '{print $2}')
 project_name=$(echo $git_remote_url | awk -F '/' '{print$NF}' | sed -e 's/.git//g')
@@ -317,8 +317,8 @@ function upgrade_service() {
 	[ "${skip_verify}" = "false" ] && read -p "是否升级${environment}工作负载？[y/n]: " res || res="y"
 
 	if [ "$res" = "y" ]; then
-		hash rancher 2> /dev/null || (echo "未安装rancher-cli！" && return)
-		hash kubectl 2> /dev/null || (echo "未安装kubectl！" && return)
+		! hash rancher 2> /dev/null && echo "未安装rancher-cli！" && return
+		! hash kubectl 2> /dev/null && echo "未安装kubectl！" && return
 
 		[ -z "${rancher_url}" ] && echo "rancher地址未配置！" && return
 
@@ -404,6 +404,7 @@ function finally() {
 			fi
 		fi
 	fi
+
 	hash on_finally &> /dev/null && on_finally
 	echo "push tag: $version"
 
@@ -424,7 +425,7 @@ function front_build() {
 function front_local_push() {
 
 	echo "开始本地发布镜像..."
-	hash docker 2> /dev/null || (echo "检测到Docker程序未安装！" && finally && exit 1)
+	! hash docker &> /dev/null && echo "检测到Docker程序未安装！" && finally && exit 1
 	if [ -z "${front_local_pack_dir}" -o ! -d "${front_local_pack_dir}" ]; then
 		echo "请配置或创建本地打包目录！"
 		finally && exit 1
@@ -458,14 +459,18 @@ function front_online_push() {
 	echo "上传前端代码中..."
 	local front_local_basename="$(basename ${front_local_dirname})"
 	tar zcvf ${front_local_basename}.tar.gz -C ${front_local_dirname} . &> /dev/null
-	[ $? -ne 0 ] && echo "前端代码压缩失败！" && finally && exit 1
+	[ $? -ne 0 ] && echo "前端代码压缩失败！" && finally && exit 
+	# 开始上传前端文件
 	scp -r ${front_local_basename}.tar.gz ${front_server_user}@${front_server_address}:${front_server_dir} > /dev/null
-	[ $? -ne 0 ] && echo "代码上传失败，停止发布！" && finally && exit 1
+	[ $? -ne 0 ] && echo "代码上传失败，停止发布！" && finally && rm -rf ${front_local_basename}.tar.gz && exit 1
+	# 清理临时文件
+	rm -rf ${front_local_basename}.tar.gz
+	# 解压前端文件
 	ssh ${front_server_user}@${front_server_address} \
 		"cd ${front_server_dir} && \
 		mkdir ${front_local_basename} && \
 		tar zxvf ${front_local_basename}.tar.gz -C ${front_local_basename} &> /dev/null"
-
+	# docker发布
 	ssh ${front_server_user}@${front_server_address} \
 		"docker login ${server} -u ${username} -p ${password} && \
 		docker build -t ${image_full_name}:${version} ${front_server_dir} && \
