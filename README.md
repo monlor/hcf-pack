@@ -41,14 +41,14 @@
 * `hcfpack`：不加任何参数时，取当前分支进行发布
 * `hcfpack 分支名`：从远程仓库拉取指定分支进行打包，发布到那个环境中取决于分支名称，脚本会模糊匹配分支名称中所包含的`dev/uat/prod`分支名，从而发布到对应的环境。举个例子：`dev`分支名称为`dev-latest`，指定要发布的分支名称为`dev-latest-ttt`，那么脚本会发布`dev-latest-ttt`到`dev`环境
 * `hcfpack 分支名 [dev/uat/prod]`：第一个参数指定分支名，第二个参数指定该分支要发布的环境；例如`hcfpack dev-latest-ttt dev`，即发布`dev-latest-ttt`分支到`dev`环境
-* **发布当前分支如何指定环境？**`packhcf now dev`即可
+* **发布当前分支如何指定环境？**`hcfpack now dev`即可
 
 #### 项目环境变量说明
 
 > 有值的变量除非特殊情况，不建议修改
 
 ```
-#============== packhcf ==============
+#============== hcfpack ==============
 # 此参数决定镜像版本的命名，镜像命名方式为 \${tag}-\${env}-\${date}，如 v1.5.0-dev-2020010110
 tag=v1.5.0
 
@@ -141,7 +141,7 @@ push_latest_tag=false
 # 	node update-router --env="\${1}"
 
 # }
-#============== packhcf ==============
+#============== hcfpack ==============
 ```
 
 #### Rancher信息获取方式

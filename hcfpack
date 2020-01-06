@@ -8,7 +8,7 @@
 # 缓存区保存名称规则：当前分支-当前分钟，如dev-latest-1908201005
 # 前端发布需要添加服务器ssh-key，或者手动输入服务器密码
 # 20191128: 前端编译时区分环境更新路由信息
-# 20191210: 支持【packhcf 分支名 [环境]】打包代码，不输入环境会识别分支名中的环境标识
+# 20191210: 支持【hcfpack 分支名 [环境]】打包代码，不输入环境会识别分支名中的环境标识
 # 20191220: 优化代码结构，支持rancher升级[mac安装依赖 brew install kubectl rancher-cli]，支持缓存
 # 20191225: 现在不输入镜像名称，下次也不会提示你输入，工作负载名称输入错误，会提示重新输入
 # 20191225: 支持使用用户环境变量覆盖脚本中的变量值
@@ -35,10 +35,10 @@ project_env_file=${project_env_dir}/${project_group_name/\//_}/$(basename ${0}).
 [ -f "${project_env_file}" ] && source "${project_env_file}"
 #========================================
 
-if [ ! -f "${project_env_file}" -o -z "`cat "${project_env_file}" 2> /dev/null | grep "= packhcf ="`" ]; then
+if [ ! -f "${project_env_file}" ]; then
 	echo "未检测到脚本环境变量，请修改配置文件: ${project_env_file}"
 	cat >> "${project_env_file}" << EOF
-#============== packhcf ==============
+#============== hcfpack ==============
 # 此参数决定镜像版本的命名，镜像命名方式为 \${tag}-\${env}-\${date}，如 v1.5.0-dev-2020010110
 tag=v1.5.0
 
@@ -131,7 +131,7 @@ push_latest_tag=false
 # 	node update-router --env="\${1}"
 
 # }
-#============== packhcf ==============
+#============== hcfpack ==============
 EOF
 	exit 1
 fi
@@ -218,6 +218,11 @@ function parseVariables() {
 	rancher_url=`parseStr "${environment}_rancher_url"`
 	rancher_project_id=`parseStr "${environment}_rancher_project_id"`
 	rancher_namespace=`parseStr "${environment}_rancher_namespace"`
+
+	if [ -z "${server}" ]; then
+		echo "变量${environment}_server不能为空！"
+		exit 1
+	fi
 
 }
 
@@ -431,6 +436,8 @@ function front_build() {
 	# [ -n "${front_local_dirname}" -a -d "${front_local_dirname}" ] && rm -rf "${front_local_dirname}"
 	[ -n "${front_build_cmd}" ] && eval "${front_build_cmd}" > /dev/null || npm run build > /dev/null
 	[ $? -ne 0 ] && echo "代码编译失败，停止发布！" && finally && exit 1
+	# 消除颜色
+	echo -e "\033[0m"
 
 }
 
