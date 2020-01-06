@@ -9,7 +9,7 @@
 
 #### 手动安装（假设安装到~/Document）
 
-* 到[latest release](https://github.com/monlor/hcf-pack/releases/latest)下载`Source code`
+* 到[`latest release`](https://github.com/monlor/hcf-pack/releases/latest)下载`Source code`
 
   ![](https://file.monlor.com/img/20200106160711.png)
 
@@ -45,6 +45,8 @@
 
 #### 项目环境变量说明
 
+> 有值的变量除非特殊情况，不建议修改
+
 ```
 #============== packhcf ==============
 # 此参数决定镜像版本的命名，镜像命名方式为 ${tag}-${env}-${date}，如 v1.5.0-dev-2020010110
@@ -59,17 +61,17 @@ uat_branch=release-latest
 prod_branch=master-latest
 
 # 定义镜像仓库地址，over_http表示镜像库是否是http协议的
-dev_server=11.11.11.11:4000
+dev_server=
 dev_username=
 dev_password=
 dev_over_http=
 
-uat_server=11.11.11.11:4000
+uat_server=
 uat_username=
 uat_password=
 uat_over_http=
 
-prod_server=11.11.11.11:4000
+prod_server=
 prod_username=
 prod_password=
 prod_over_http=
@@ -77,12 +79,8 @@ prod_over_http=
 # 后端仓库额外路径，如/docker，会拼接在镜像仓库地址后面
 registry_extra_path=
 
-# 远程打包信息，本地不安装docker环境的情况下，使用远程服务器的docker环境打包
-# 注意在远程服务器上添加自己的ssh密钥
-front_server_address=11.11.11.11
-front_server_user=root
-front_server_dir=/home/web-front/$(date +%y%m%d%H%M)
-
+# 是否启用rancher自动部署
+rancher_deploy=true
 # 定义rancher地址，用于rancher自动发布，注意命名空间是小写
 dev_rancher_url=
 dev_rancher_token=
@@ -99,18 +97,29 @@ prod_rancher_token=
 prod_rancher_project_id=
 prod_rancher_namespace=default
 
+# 前端打包方式[server/local]，server在服务器上打包，local在本地打包
+front_pack_method=server
+# 远程打包信息，本地不安装docker环境的情况下，使用远程服务器的docker环境打包
+# 注意在远程服务器上添加自己的ssh密钥
+front_server_address=
+front_server_user=root
+front_server_dir=/home/web-front/$(date +%y%m%d%H%M)
+
 # 前端模块名称，git仓库中的名称
 front_module_name=front
 # 前端编译目标文件夹
 front_local_dirname=dist
 # 自定义前端编译命令
 # front_build_cmd="npm run build-script"
-# docker打包所需要的文件或文件夹，相对于项目根路径
+# 前端docker打包所需要的文件或文件夹，相对于项目根路径
 front_docker_files="./Dockerfile ./docker"
 # 本地打包目录，不建议设置为前端项目目录，设置为.时，会在项目根目录中打包
 front_local_pack_dir=~/build
+
 # 跳过确认步骤，跳过后执行程序全程无需确认，全自动发布
-# skip_verify=false
+skip_verify=false
+# 推送latest标签
+push_latest_tag=false
 
 # 回调函数，脚本发布到镜像库结束时的回调
 # function on_finally() {
