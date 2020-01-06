@@ -1,13 +1,13 @@
 ### 安装教程
 
-##### brew安装（[brew](https://brew.sh/index_zh-cn)支持WSL/Linux/Mac）
+#### 【推荐】brew安装（[brew](https://brew.sh/index_zh-cn)支持WSL/Linux/Mac）
 
 ```
 ➜ brew tap monlor/taps
 ➜ brew install hcf-pack
 ```
 
-##### 手动安装（假设安装到~/Document）
+#### 手动安装（假设安装到~/Document）
 
 * 到[latest release](https://github.com/monlor/hcf-pack/releases/latest)下载`Source code`
 
@@ -19,7 +19,7 @@
 
 ### 开始使用
 
-##### 配置项目环境变量
+#### 配置项目环境变量
 
 * 在`git`项目目录中执行`hcfpack`，提示生成一个项目环境变量文件
 
@@ -31,7 +31,7 @@
 
 * 修改`hcfpack.env`中的配置，完成之后继续在`git`项目目录中执行`hcfpack`
 
-##### 使用命令说明
+#### 使用命令说明
 
 ```
 ➜ hcfpack [dev/uat/prod 或 分支名]
@@ -41,9 +41,9 @@
 * `hcfpack`：不加任何参数时，取当前分支进行发布
 * `hcfpack 分支名`：从远程仓库拉取指定分支进行打包，发布到那个环境中取决于分支名称，脚本会模糊匹配分支名称中所包含的`dev/uat/prod`分支名，从而发布到对应的环境。举个例子：`dev`分支名称为`dev-latest`，指定要发布的分支名称为`dev-latest-ttt`，那么脚本会发布`dev-latest-ttt`到`dev`环境
 * `hcfpack 分支名 [dev/uat/prod]`：第一个参数指定分支名，第二个参数指定该分支要发布的环境；例如`hcfpack dev-latest-ttt dev`，即发布`dev-latest-ttt`分支到`dev`环境
-* 发布当前分支如何指定环境？`packhcf now dev`即可
+* **发布当前分支如何指定环境？**`packhcf now dev`即可
 
-##### 项目环境变量说明
+#### 项目环境变量说明
 
 ```
 #============== packhcf ==============
@@ -135,7 +135,7 @@ front_local_pack_dir=~/build
 #============== packhcf ==============
 ```
 
-##### Rancher信息获取方式
+#### Rancher信息获取方式
 
 * 获取`Rancher`集群地址
 
