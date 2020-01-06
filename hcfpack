@@ -417,7 +417,7 @@ function front_build() {
 	hash on_front_build &> /dev/null && on_front_build
 	# 先删除以前的编译文件
 	# [ -n "${front_local_dirname}" -a -d "${front_local_dirname}" ] && rm -rf "${front_local_dirname}"
-	[ -n "${front_build_cmd}" ] && eval "${front_build_cmd}" &> /dev/null || npm run build &> /dev/null
+	[ -n "${front_build_cmd}" ] && eval "${front_build_cmd}" > /dev/null || npm run build > /dev/null
 	[ $? -ne 0 ] && echo "代码编译失败，停止发布！" && finally && exit 1
 
 }
