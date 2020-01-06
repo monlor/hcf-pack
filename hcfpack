@@ -1,6 +1,5 @@
 #!/bin/bash 
 # copyright by qianjun.gong
-# script version: 1.5
 # 【建议采用环境变量的方式修改配置，而不建议修改脚本内容】
 
 # 使用方式 ./push [dev/uat/prod]，如果当前分支有修改会自动存到stash暂存区

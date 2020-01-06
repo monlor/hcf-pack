@@ -17,6 +17,8 @@
 
 * 添加`~/Document/hcf-pack`到环境变量PATH
 
+* **`Rancher`自动部署需要安装`kubectl`和`racher-cli`命令行工具**
+
 ### 开始使用
 
 #### 配置项目环境变量
