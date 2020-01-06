@@ -49,7 +49,7 @@
 
 ```
 #============== packhcf ==============
-# 此参数决定镜像版本的命名，镜像命名方式为 ${tag}-${env}-${date}，如 v1.5.0-dev-2020010110
+# 此参数决定镜像版本的命名，镜像命名方式为 \${tag}-\${env}-\${date}，如 v1.5.0-dev-2020010110
 tag=v1.5.0
 
 # 后端打包基础镜像
@@ -103,7 +103,7 @@ front_pack_method=server
 # 注意在远程服务器上添加自己的ssh密钥
 front_server_address=
 front_server_user=root
-front_server_dir=/home/web-front/$(date +%y%m%d%H%M)
+front_server_dir=/home/web-front/\$(date +%y%m%d%H%M)
 
 # 前端模块名称，git仓库中的名称
 front_module_name=front
@@ -138,7 +138,7 @@ push_latest_tag=false
 # 		cp config/config.js config/config.js.packing
 # 	fi
 # 	cp -rf config/config.copy.js config/config.js
-# 	node update-router --env=""
+# 	node update-router --env="\${1}"
 
 # }
 #============== packhcf ==============
