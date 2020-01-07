@@ -138,7 +138,7 @@ push_latest_tag=false
 # 		cp config/config.js config/config.js.packing
 # 	fi
 # 	cp -rf config/config.copy.js config/config.js
-# 	node update-router --env="\${1}"
+# 	node update-router --env="\${environment}"
 
 # }
 #============== hcfpack ==============

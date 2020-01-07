@@ -127,7 +127,7 @@ push_latest_tag=false
 # 		cp config/config.js config/config.js.packing
 # 	fi
 # 	cp -rf config/config.copy.js config/config.js
-# 	node update-router --env="\${1}"
+# 	node update-router --env="\${environment}"
 
 # }
 #============== hcfpack ==============
@@ -421,7 +421,7 @@ function finally() {
 		fi
 	fi
 
-	hash on_finally &> /dev/null && on_finally "${environment}"
+	hash on_finally &> /dev/null && on_finally
 	echo "push tag: $version"
 
 }
@@ -430,7 +430,7 @@ function front_build() {
 
 	echo "本地编译代码..."
 	
-	hash on_front_build &> /dev/null && on_front_build "${environment}"
+	hash on_front_build &> /dev/null && on_front_build
 	# 先删除以前的编译文件
 	# [ -n "${front_local_dirname}" -a -d "${front_local_dirname}" ] && rm -rf "${front_local_dirname}"
 	[ -n "${front_build_cmd}" ] && eval "${front_build_cmd}" > /dev/null || npm run build > /dev/null
