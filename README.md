@@ -5,6 +5,7 @@
 ```
 ➜ brew tap monlor/taps
 ➜ brew install hcf-pack
+➜ brew upgrade hcf-pack # 脚本更新命令，配置完成后不建议更新
 ```
 
 #### 手动安装（假设安装到~/Document）
