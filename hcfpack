@@ -16,7 +16,7 @@
 
 # 脚本初始化
 #========================================
-version=v1.5.4
+version=v1.5.5
 # 脚本缓存目录，可通过配置用户或系统环境变量的方式修改
 project_env_dir=${project_env_dir:-~/.project}
 # 判断是否为git项目
@@ -36,7 +36,9 @@ project_env_file=${project_env_dir}/${project_group_name/\//_}/$(basename ${0}).
 #========================================
 
 if [ ! -f "${project_env_file}" -o "${version}" != "${created_version}" ]; then
-	if [ "${version}" != "${created_version}" ]; then
+
+	[ "${version}" != "${created_version}" -a -f "${project_env_file}" ] && upgrading=true || upgrading=false
+	if [ "${upgrading}" = "true" ]; then
 		read -p "环境变量文件版本与程序版本不一致，是否自动更新？[y/n]: " res
 		echo "> 更新后建议检查环境变量文件是否有需要修改的地方！"
 		[ "${res}" != "y" ] && exit 1
@@ -122,7 +124,7 @@ push_latest_tag=${push_latest_tag:-false}
 
 EOF
 
-	if [ "${version}" != "${created_version}" ]; then
+	if [ "${upgrading}" = "true" ]; then
 		# 版本更新时，需要将函数更新到变量文件
 		start_line="$(cat "${project_env_file}.tmp" | grep -n "=== callback ===" | cut -d':' -f1 | head -1)"
 		end_line="$(cat "${project_env_file}.tmp" | grep -n "=== callback ===" | cut -d':' -f1 | tail -1)"
