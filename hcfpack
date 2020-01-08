@@ -16,6 +16,7 @@
 
 # 脚本初始化
 #========================================
+version=v1.5.4
 # 脚本缓存目录，可通过配置用户或系统环境变量的方式修改
 project_env_dir=${project_env_dir:-~/.project}
 # 判断是否为git项目
@@ -34,82 +35,104 @@ project_env_file=${project_env_dir}/${project_group_name/\//_}/$(basename ${0}).
 [ -f "${project_env_file}" ] && source "${project_env_file}"
 #========================================
 
-if [ ! -f "${project_env_file}" ]; then
-	echo "未检测到脚本环境变量，请修改配置文件: ${project_env_file}"
-	cat >> "${project_env_file}" << EOF
-#============== hcfpack ==============
+if [ ! -f "${project_env_file}" -o "${version}" != "${created_version}" ]; then
+	if [ "${version}" != "${created_version}" ]; then
+		read -p "环境变量文件版本与程序版本不一致，是否自动更新？[y/n]: " res
+		echo "> 更新后建议检查环境变量文件是否有需要修改的地方！"
+		[ "${res}" != "y" ] && exit 1
+		cp -rf "${project_env_file}" "${project_env_file}.tmp"
+	else
+		echo "环境变量文件已生成: ${project_env_file}"
+		echo "请手动修改文件，再继续..."
+	fi
+	cat > "${project_env_file}" << EOF
+# 变量创建时，程序版本
+created_version=${version}
 # 此参数决定镜像版本的命名，镜像命名方式为 \${tag}-\${env}-\${date}，如 v1.5.0-dev-2020010110
-tag=v1.5.0
+tag=${tag:-v1.5.0}
 
 # 后端打包基础镜像
-base_image=
+base_image=${base_image}
 
 # 定义环境分支名称
-dev_branch=dev-latest
-uat_branch=release-latest
-prod_branch=master-latest
+dev_branch=${dev_branch:-dev-latest}
+uat_branch=${uat_branch:-release-latest}
+prod_branch=${prod_branch:-master-latest}
 
 # 定义镜像仓库地址，over_http表示镜像库是否是http协议的
-dev_server=
-dev_username=
-dev_password=
-dev_over_http=
+dev_server=${dev_server}
+dev_username=${dev_username}
+dev_password=${dev_password}
+dev_over_http=${dev_over_http}
 
-uat_server=
-uat_username=
-uat_password=
-uat_over_http=
+uat_server=${uat_server}
+uat_username=${uat_username}
+uat_password=${uat_password}
+uat_over_http=${uat_over_http}
 
-prod_server=
-prod_username=
-prod_password=
-prod_over_http=
+prod_server=${prod_server}
+prod_username=${prod_username}
+prod_password=${prod_password}
+prod_over_http=${prod_over_http}
 
-# 后端仓库额外路径，如/docker，会拼接在镜像仓库地址后面
-registry_extra_path=
+# 仓库额外路径，如/docker，会拼接在镜像仓库地址后面
+registry_extra_path=${registry_extra_path}
 
 # 是否启用rancher自动部署
-rancher_deploy=true
+rancher_deploy=${rancher_deploy:-true}
 # 定义rancher地址，用于rancher自动发布，注意命名空间是小写
-dev_rancher_url=
-dev_rancher_token=
-dev_rancher_project_id=
-dev_rancher_namespace=default
+dev_rancher_url=${dev_rancher_url}
+dev_rancher_token=${dev_rancher_token}
+dev_rancher_project_id=${dev_rancher_project_id}
+dev_rancher_namespace=${dev_rancher_namespace:-default}
 
-uat_rancher_url=
-uat_rancher_token=
-uat_rancher_project_id=
-uat_rancher_namespace=default
+uat_rancher_url=${uat_rancher_url}
+uat_rancher_token=${uat_rancher_token}
+uat_rancher_project_id=${uat_rancher_project_id}
+uat_rancher_namespace=${uat_rancher_namespace:-default}
 
-prod_rancher_url=
-prod_rancher_token=
-prod_rancher_project_id=
-prod_rancher_namespace=default
+prod_rancher_url=${prod_rancher_url}
+prod_rancher_token=${prod_rancher_token}
+prod_rancher_project_id=${prod_rancher_project_id}
+prod_rancher_namespace=${prod_rancher_namespace:-default}
 
 # 前端打包方式[server/local]，server在服务器上打包，local在本地打包
-front_pack_method=server
+front_pack_method=${front_pack_method:-server}
 # 远程打包信息，本地不安装docker环境的情况下，使用远程服务器的docker环境打包
 # 注意在远程服务器上添加自己的ssh密钥
-front_server_address=
-front_server_user=root
-front_server_dir=/home/web-front/\$(date +%y%m%d%H%M)
+front_server_address=${front_server_address}
+front_server_user=${front_server_user:-root}
+front_server_dir=$(test -n "${front_server_dir}" && cat ${project_env_file} | grep front_server_dir | cut -d'=' -f2 | head -1 | sed -e 's/\$/\$/g' || echo -n "/home/web-front/\$(date +%y%m%d%H%M)")
 
 # 前端模块名称，git仓库中的名称
-front_module_name=front
+front_module_name=${front_module_name:-front}
 # 前端编译目标文件夹
-front_local_dirname=dist
+front_local_dirname=${front_local_dirname:-dist}
 # 自定义前端编译命令
-# front_build_cmd="npm run build-script"
+front_build_cmd='${front_build_cmd}'
 # 前端docker打包所需要的文件或文件夹，相对于项目根路径
-front_docker_files="./Dockerfile ./docker"
+front_docker_files='${front_docker_files:-"./Dockerfile ./docker"}'
 # 本地打包目录，不建议设置为前端项目目录，设置为.时，会在项目根目录中打包
-front_local_pack_dir=~/build
+front_local_pack_dir=${front_local_pack_dir:-~/build}
 
 # 跳过确认步骤，跳过后执行程序全程无需确认，全自动发布
-skip_verify=false
+skip_verify=${skip_verify:-false}
 # 推送latest标签
-push_latest_tag=false
+push_latest_tag=${push_latest_tag:-false}
 
+EOF
+
+	if [ "${version}" != "${created_version}" ]; then
+		# 版本更新时，需要将函数更新到变量文件
+		start_line="$(cat "${project_env_file}.tmp" | grep -n "=== callback ===" | cut -d':' -f1 | head -1)"
+		end_line="$(cat "${project_env_file}.tmp" | grep -n "=== callback ===" | cut -d':' -f1 | tail -1)"
+		if [ -n "${start_line}" -a -n "${end_line}" ]; then
+			sed -n "${start_line},${end_line}p" "${project_env_file}.tmp" >> "${project_env_file}"
+		fi
+	else 
+		cat >> "${project_env_file}" << EOF
+
+#============== callback ==============
 # 回调函数，脚本发布到镜像库结束时的回调
 # function on_finally() {
 
@@ -130,8 +153,11 @@ push_latest_tag=false
 # 	node update-router --env="\${environment}"
 
 # }
-#============== hcfpack ==============
+
+#============== callback ==============
 EOF
+	fi
+
 	exit 1
 fi
 
@@ -449,7 +475,7 @@ function front_local_push() {
 		finally && exit 1
 	elif [ "${front_local_pack_dir}" != "." -a "${front_local_pack_dir}" != "./" ]; then
 		[ ! -d "${front_local_pack_dir}" ] && mkdir -p ${front_local_pack_dir}
-		mv -f ${front_local_pack_dir}/${front_local_dirname} ${front_local_pack_dir}/${front_local_dirname}.bak &> /dev/null
+		rm -rf ${front_local_pack_dir}/${front_local_dirname}
 		cp -r ${front_local_dirname} ${front_local_pack_dir}
 		cp -r ${front_docker_files} ${front_local_pack_dir}
 	fi

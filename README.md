@@ -5,7 +5,7 @@
 ```
 ➜ brew tap monlor/taps
 ➜ brew install hcf-pack
-➜ brew upgrade hcf-pack # 脚本更新命令，配置完成后不建议更新
+➜ brew upgrade hcf-pack # 脚本更新命令
 ```
 
 #### 手动安装（假设安装到~/Document）
@@ -168,3 +168,10 @@ push_latest_tag=false
 ![](https://file.monlor.com/img/20200106165403.png)
 
 ![](https://file.monlor.com/img/20200106165459.png)
+
+### 更新日志
+
+* 2020-01-08
+  * 现在更新脚本可以自动升级环境变量文件
+  * 优化前端本地打包函数
+
