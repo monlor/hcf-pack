@@ -20,7 +20,7 @@ version=v1.5.5
 # 脚本缓存目录，可通过配置用户或系统环境变量的方式修改
 project_env_dir=${project_env_dir:-~/.project}
 # 判断是否为git项目
-! git status &> /dev/null && echo "请在项目文件夹中执行脚本！" && exit 1
+! git status &> /dev/null && echo "version: $version" && exit 0
 # 获取项目组名称，组与子组之间采用下划线分隔
 git_remote_url=$(git remote -v | grep "(push)" | grep "^origin" | awk '{print $2}')
 project_name=$(echo $git_remote_url | awk -F '/' '{print$NF}' | sed -e 's/.git//g')
@@ -35,18 +35,20 @@ project_env_file=${project_env_dir}/${project_group_name/\//_}/$(basename ${0}).
 [ -f "${project_env_file}" ] && source "${project_env_file}"
 #========================================
 
-if [ ! -f "${project_env_file}" -o "${version}" != "${created_version}" ]; then
+[ "${version}" != "${created_version}" -a -f "${project_env_file}" ] && upgrading=true || upgrading=false
 
-	[ "${version}" != "${created_version}" -a -f "${project_env_file}" ] && upgrading=true || upgrading=false
+if [ ! -f "${project_env_file}" -o "${upgrading}" = "true" ]; then
+
 	if [ "${upgrading}" = "true" ]; then
-		read -p "环境变量文件版本与程序版本不一致，是否自动更新？[y/n]: " res
-		echo "> 更新后建议检查环境变量文件是否有需要修改的地方！"
-		[ "${res}" != "y" ] && exit 1
-		cp -rf "${project_env_file}" "${project_env_file}.tmp"
-	else
-		echo "环境变量文件已生成: ${project_env_file}"
-		echo "请手动修改文件，再继续..."
-	fi
+    read -p "环境变量文件版本与程序版本不一致，是否自动更新？[y/n]: " res
+    echo "环境变量文件已更新: ${project_env_file}"
+    [ "${res}" != "y" ] && exit 1
+    cp -rf "${project_env_file}" "${project_env_file}.tmp"
+  else
+    echo "环境变量文件已生成: ${project_env_file}"
+    echo "请手动修改文件，再继续..."
+  fi
+  
 	cat > "${project_env_file}" << EOF
 # 变量创建时，程序版本
 created_version=${version}
@@ -499,13 +501,14 @@ function front_online_push() {
 	# 创建临时文件夹打包镜像
 	ssh ${front_server_user}@${front_server_address} \
 		"mkdir -p ${front_server_dir}"
+	[ $? -ne 0 ] && echo "远程打包文件夹创建失败！" && finally && exit 1 
 
 	echo "上传docker打包文件..."
 	scp -r ${front_docker_files} ${front_server_user}@${front_server_address}:${front_server_dir} > /dev/null
 	echo "上传前端代码中..."
 	local front_local_basename="$(basename ${front_local_dirname})"
 	tar zcvf ${front_local_basename}.tar.gz -C ${front_local_dirname} . &> /dev/null
-	[ $? -ne 0 ] && echo "前端代码压缩失败！" && finally && exit 
+	[ $? -ne 0 ] && echo "前端代码压缩失败！" && finally && exit 1
 	# 开始上传前端文件
 	scp -r ${front_local_basename}.tar.gz ${front_server_user}@${front_server_address}:${front_server_dir} > /dev/null
 	[ $? -ne 0 ] && echo "代码上传失败，停止发布！" && finally && rm -rf ${front_local_basename}.tar.gz && exit 1

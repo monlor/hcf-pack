@@ -1,3 +1,6 @@
+### hcf-pack
+[![GitHub release](https://img.shields.io/github/release/monlor/hcf-pack.svg)](https://github.com/monlor/hcf-pack/releases)
+
 ### 安装教程
 
 #### 【推荐】brew安装（[brew](https://brew.sh/index_zh-cn)支持WSL/Linux/Mac）
