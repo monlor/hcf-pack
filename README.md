@@ -15,7 +15,7 @@
 
 * 到[`latest release`](https://github.com/monlor/hcf-pack/releases/latest)下载`Source code`
 
-  ![](https://cdn.jsdelivr.net/gh/monlor/file/img/20200106160711.png)
+  ![](https://file.monlor.com/img/20200106160711.png)
 
 * 解压到`~/Document`
 
@@ -29,11 +29,11 @@
 
 * 在`git`项目目录中执行`hcfpack`，提示生成一个项目环境变量文件
 
-  ![](https://cdn.jsdelivr.net/gh/monlor/file/img/20200106161737.png)
+  ![](https://file.monlor.com/img/20200106161737.png)
 
 * 程序会在家目录下的`.project`目录中生成一个文件夹，文件夹命名方式为：**项目组名称_项目名称**
 
-  ![](https://cdn.jsdelivr.net/gh/monlor/file/img/20200106161913.png)
+  ![](https://file.monlor.com/img/20200106161913.png)
 
 * 修改`hcfpack.env`中的配置，完成之后继续在`git`项目目录中执行`hcfpack`
 
@@ -152,25 +152,25 @@ push_latest_tag=false
 
 * 获取`Rancher`集群地址
 
-![](https://cdn.jsdelivr.net/gh/monlor/file/img/20200106164900.png)
+![](https://file.monlor.com/img/20200106164900.png)
 
-![](https://cdn.jsdelivr.net/gh/monlor/file/img/20200106164930.png)
+![](https://file.monlor.com/img/20200106164930.png)
 
-![](https://cdn.jsdelivr.net/gh/monlor/file/img/20200106165010.png)
+![](https://file.monlor.com/img/20200106165010.png)
 
 * 获取`Rancher Token`，在管理员用户下
 
-![](https://cdn.jsdelivr.net/gh/monlor/file/img/20200106165108.png)
+![](https://file.monlor.com/img/20200106165108.png)
 
-![](https://cdn.jsdelivr.net/gh/monlor/file/img/20200106165146.png)
+![](https://file.monlor.com/img/20200106165146.png)
 
-![](https://cdn.jsdelivr.net/gh/monlor/file/img/20200106165246.png)
+![](https://file.monlor.com/img/20200106165246.png)
 
 * 获取`Rancher`项目`id`
 
-![](https://cdn.jsdelivr.net/gh/monlor/file/img/20200106165403.png)
+![](https://file.monlor.com/img/20200106165403.png)
 
-![](https://cdn.jsdelivr.net/gh/monlor/file/img/20200106165459.png)
+![](https://file.monlor.com/img/20200106165459.png)
 
 ### 更新日志
 
