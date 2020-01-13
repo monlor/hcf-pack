@@ -174,6 +174,9 @@ push_latest_tag=false
 
 ### 更新日志
 
+* 2020-01-13
+  * 添加变量`apollo_url`、`apollo_appid`、`apollo_cluster`、`apollo_namespace`，用于加载`apollo`配置
+  * `apollo`配置优先级高于本地环境变量文件
 * 2020-01-08
   * 现在更新脚本可以自动升级环境变量文件
   * 优化前端本地打包函数
