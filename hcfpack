@@ -16,7 +16,7 @@
 
 # 脚本初始化
 #========================================
-version=v1.5.6
+version=v1.5.7
 # 脚本缓存目录，可通过配置用户或系统环境变量的方式修改
 project_env_dir=${project_env_dir:-~/.project}
 # 判断是否为git项目
@@ -41,8 +41,8 @@ if [ ! -f "${project_env_file}" -o "${upgrading}" = "true" ]; then
 
 	if [ "${upgrading}" = "true" ]; then
     read -p "环境变量文件版本与程序版本不一致，是否自动更新？[y/n]: " res
-    echo "更新环境变量文件: ${project_env_file}"
     [ "${res}" != "y" ] && exit 1
+    echo "更新环境变量文件: ${project_env_file}"
     cp -rf "${project_env_file}" "${project_env_file}.tmp"
   else
     echo "生成环境变量文件: ${project_env_file}"
@@ -115,9 +115,9 @@ front_local_dirname=${front_local_dirname:-dist}
 # 自定义前端编译命令
 front_build_cmd='${front_build_cmd}'
 # 前端docker打包所需要的文件或文件夹，相对于项目根路径
-front_docker_files='${front_docker_files:-"./Dockerfile ./docker"}'
+front_docker_files='${front_docker_files:-./Dockerfile ./docker}'
 # 本地打包目录，不建议设置为前端项目目录，设置为.时，会在项目根目录中打包
-front_local_pack_dir=${front_local_pack_dir:-~/build}
+front_local_pack_dir='${front_local_pack_dir:-~/build}'
 
 # 跳过确认步骤，跳过后执行程序全程无需确认，全自动发布
 skip_verify=${skip_verify:-false}
@@ -131,9 +131,9 @@ apollo_namespace=${apollo_namespace}
 apollo_cluster=${apollo_cluster}
 
 # 回调函数，脚本发布到镜像库结束时的回调
-# on_finally='${on_finally:-"[ -f config/config.js.packing ] && mv -f config/config.js.packing config/config.js"}'
+# on_finally='${on_finally:-[ -f config/config.js.packing ] && mv -f config/config.js.packing config/config.js}'
 # 回调函数，在前端代码编译之前的回调
-# on_front_build='${on_front_build:-"[ -f config/config.js ] && cp config/config.js config/config.js.packing; cp -rf config/config.copy.js config/config.js; node update-router --env="${environment}""}'
+# on_front_build='${on_front_build:-[ -f config/config.js ] && cp config/config.js config/config.js.packing; cp -rf config/config.copy.js config/config.js; node update-router --env=\${environment}}'
 
 EOF
 
