@@ -16,7 +16,7 @@
 
 # 脚本初始化
 #========================================
-version=v1.5.5
+version=v1.5.6
 # 脚本缓存目录，可通过配置用户或系统环境变量的方式修改
 project_env_dir=${project_env_dir:-~/.project}
 # 判断是否为git项目
@@ -41,11 +41,11 @@ if [ ! -f "${project_env_file}" -o "${upgrading}" = "true" ]; then
 
 	if [ "${upgrading}" = "true" ]; then
     read -p "环境变量文件版本与程序版本不一致，是否自动更新？[y/n]: " res
-    echo "环境变量文件已更新: ${project_env_file}"
+    echo "更新环境变量文件: ${project_env_file}"
     [ "${res}" != "y" ] && exit 1
     cp -rf "${project_env_file}" "${project_env_file}.tmp"
   else
-    echo "环境变量文件已生成: ${project_env_file}"
+    echo "生成环境变量文件: ${project_env_file}"
     echo "请手动修改文件，再继续..."
   fi
   
@@ -124,59 +124,21 @@ skip_verify=${skip_verify:-false}
 # 推送latest标签
 push_latest_tag=${push_latest_tag:-false}
 
-EOF
+# 加载apollo配置，会覆盖当前配置，url和appid为必输
+apollo_url=${apollo_url}
+apollo_appid=${apollo_appid}
+apollo_namespace=${apollo_namespace}
+apollo_cluster=${apollo_cluster}
 
-	if [ "${upgrading}" = "true" ]; then
-		# 版本更新时，需要将函数更新到变量文件
-		start_line="$(cat "${project_env_file}.tmp" | grep -n "=== callback ===" | cut -d':' -f1 | head -1)"
-		end_line="$(cat "${project_env_file}.tmp" | grep -n "=== callback ===" | cut -d':' -f1 | tail -1)"
-		if [ -n "${start_line}" -a -n "${end_line}" ]; then
-			sed -n "${start_line},${end_line}p" "${project_env_file}.tmp" >> "${project_env_file}"
-		fi
-	else 
-		cat >> "${project_env_file}" << EOF
-
-#============== callback ==============
 # 回调函数，脚本发布到镜像库结束时的回调
-# function on_finally() {
-
-# 	if [ -f config/config.js.packing ]; then
-# 		mv -f config/config.js.packing config/config.js
-# 	fi
-
-# }
-
+# on_finally='${on_finally:-"[ -f config/config.js.packing ] && mv -f config/config.js.packing config/config.js"}'
 # 回调函数，在前端代码编译之前的回调
-# function on_front_build() {
+# on_front_build='${on_front_build:-"[ -f config/config.js ] && cp config/config.js config/config.js.packing; cp -rf config/config.copy.js config/config.js; node update-router --env="${environment}""}'
 
-# 	# 复制config文件 for hcf
-# 	if [ -f config/config.js ]; then
-# 		cp config/config.js config/config.js.packing
-# 	fi
-# 	cp -rf config/config.copy.js config/config.js
-# 	node update-router --env="\${environment}"
-
-# }
-
-#============== callback ==============
 EOF
-	fi
 
 	exit 1
 fi
-
-# 可配置区域
-############################################
-# 推送latest标签
-push_latest_tag=${push_latest_tag:-false}
-# rancher 
-rancher_deploy=${rancher_deploy:-true}
-# 跳过确认操作，取默认值
-skip_verify=${skip_verify:-false}
-# 打包方式[server/local]，server在服务器上打包，local在本地打包
-front_pack_method=${front_pack_method:-server}
-
-############################################
 
 arg1=${1}
 arg2=${2}
@@ -189,8 +151,6 @@ now_branch=`git branch 2> /dev/null | awk '/^\*/{print$2}'`
 stash_save_name=${now_branch}-`date +%Y%m%d%H%M`
 # 是否暂存，1为否
 stash_saved=1
-# 镜像版本
-version=${tag}-${environment}-${now}
 # 镜像仓库地址
 server=""     
 # 镜像仓库用户
@@ -206,47 +166,60 @@ rancher_url=""
 rancher_project_id=""
 rancher_namespace=""
 artifact_id=""
+version=""
+
+function load_apollo_config() {
+
+	[ -z "${apollo_url}" -o -z "${apollo_appid}" ] && return
+
+	echo "加载apollo配置..."
+	local apollo_cluster=${apollo_cluster:-default}
+	local apollo_namespace=${apollo_namespace:-application}
+	eval "`curl -s ${apollo_url}/configfiles/${apollo_appid}/${apollo_cluster}/${apollo_namespace}`"
+	[ $? -ne 0 ] && echo "apollo配置加载失败！" 
+
+}
 
 # 通过传入一个字符串，取变量名称等于该字符串的变量值
-function parseStr() {
+function parse_str() {
 
 	[ -z "${1}" ] && echo -n "" || eval echo -n '$'"${1}"
 
 }
 
-function parseVariables() {
+function parse_variables() {
 
 	case "$arg1" in
 	    "dev"|"uat"|"prod") 	
-			base_branch=`eval echo '$'"${environment}_branch"`
-			;;
+				base_branch=`eval echo '$'"${environment}_branch"`
+				;;
 	    *)
-			[ -n "$arg1" -a "$arg1" != "now" ] && base_branch="$arg1" || base_branch=${now_branch}
-			if [ -n "$arg2" ]; then
-				environment="$arg2" 
-			else
-				if [ -n "`echo ${base_branch} | grep "${dev_branch}"`" ]; then
-					environment="dev"
-				elif [ -n "`echo ${base_branch} | grep "${uat_branch}"`" ]; then
-					environment="uat"
-				elif [ -n "`echo ${base_branch} | grep "${prod_branch}"`" ]; then
-					environment="prod"
-				else 
-					environment="dev"
+				[ -n "$arg1" -a "$arg1" != "now" ] && base_branch="$arg1" || base_branch=${now_branch}
+				if [ -n "$arg2" ]; then
+					environment="$arg2" 
+				else
+					if [ -n "`echo ${base_branch} | grep "${dev_branch}"`" ]; then
+						environment="dev"
+					elif [ -n "`echo ${base_branch} | grep "${uat_branch}"`" ]; then
+						environment="uat"
+					elif [ -n "`echo ${base_branch} | grep "${prod_branch}"`" ]; then
+						environment="prod"
+					else 
+						environment="dev"
+					fi
 				fi
-			fi
-			version=${tag}-${environment}-${now}
 	    	;;
 	esac	
-
-	server=`parseStr "${environment}_server"`
-	username=`parseStr "${environment}_username"`
-	password=`parseStr "${environment}_password"`
-	over_http=`parseStr "${environment}_over_http"`
-	rancher_token=`parseStr "${environment}_rancher_token"`
-	rancher_url=`parseStr "${environment}_rancher_url"`
-	rancher_project_id=`parseStr "${environment}_rancher_project_id"`
-	rancher_namespace=`parseStr "${environment}_rancher_namespace"`
+	
+	version=${tag}-${environment}-${now}
+	server=`parse_str "${environment}_server"`
+	username=`parse_str "${environment}_username"`
+	password=`parse_str "${environment}_password"`
+	over_http=`parse_str "${environment}_over_http"`
+	rancher_token=`parse_str "${environment}_rancher_token"`
+	rancher_url=`parse_str "${environment}_rancher_url"`
+	rancher_project_id=`parse_str "${environment}_rancher_project_id"`
+	rancher_namespace=`parse_str "${environment}_rancher_namespace"`
 
 	if [ -z "${server}" ]; then
 		echo "变量${environment}_server不能为空！"
@@ -256,20 +229,20 @@ function parseVariables() {
 }
 
 # 解析pom
-function getXmlValue() {
+function get_xml_value() {
 
 	echo "`cat "$1" | grep "<$2>" | head -1 | sed -E "s/(<$2>)(.*)(<\/$2>)/\2/" | tr -d '\r' | tr -d '\t' | sed -e 's/ //g'`"
 
 }
 
-function getFullImageName() {
+function get_full_image_name() {
 
 	# 获取镜像全名，前端取前端模块名称，后端取artifactId
 	if [ "${project_name}" = "${front_module_name}" ]; then
 		# artifact_id="${front_module_name}"
 		image_full_name=${server}${registry_extra_path}/${front_module_name}
 	else
-		artifact_id="$(getXmlValue ./pom.xml artifactId)"
+		artifact_id="$(get_xml_value ./pom.xml artifactId)"
 		[ -z "${artifact_id}" ] && echo "获取artifactId失败！" && exit 1
 		image_full_name=${server}${registry_extra_path}/${artifact_id}
 	fi
@@ -451,7 +424,7 @@ function finally() {
 		fi
 	fi
 
-	hash on_finally &> /dev/null && on_finally
+	[ -n "${on_finally}" ] && eval "${on_finally}"
 	echo "push tag: $version"
 
 }
@@ -460,7 +433,7 @@ function front_build() {
 
 	echo "本地编译代码..."
 	
-	hash on_front_build &> /dev/null && on_front_build
+	[ -n "${on_front_build}" ] && eval "${on_front_build}"
 	# 先删除以前的编译文件
 	# [ -n "${front_local_dirname}" -a -d "${front_local_dirname}" ] && rm -rf "${front_local_dirname}"
 	[ -n "${front_build_cmd}" ] && eval "${front_build_cmd}" > /dev/null || npm run build > /dev/null
@@ -582,9 +555,11 @@ function auto_build_and_push() {
 
 function main_process() {
 
-	parseVariables
+	load_apollo_config
 
-	getFullImageName
+	parse_variables
+
+	get_full_image_name
 
 	prepare
 
