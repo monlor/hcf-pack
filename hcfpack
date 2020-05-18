@@ -14,11 +14,15 @@
 # 20191230: 现在通过项目环境变量文件来配置环境信息，脚本升级更方便，支持多项目。【推荐将脚本加入系统环境变量】
 # 20200102: 1.现在环境变量不配置在脚本里，第一次启动会自动生成配置模板 2.脚本支持rancher自动升级，将skip_verify变量设置为true后，全程发布无需手动确认 3. 支持变量缓存
 
+[ -f ../remote_publish.env ] && source ../remote_publish.env
 # 脚本初始化
 #========================================
 version=v1.5.7
 # 脚本缓存目录，可通过配置用户或系统环境变量的方式修改
 project_env_dir=${project_env_dir:-~/.project}
+# 脚本名称/路径
+[ "$(basename "${0}")" != "${0}" ] && program_file_path="${0}" || program_file_path="$(which "${0}")"
+program_file_name="$(basename "${0}")"
 # 判断是否为git项目
 ! git status &> /dev/null && echo "version: $version" && exit 0
 # 获取项目组名称，组与子组之间采用下划线分隔
@@ -28,9 +32,9 @@ project_group_name=$(echo $git_remote_url | grep -Eo '[:/]([^./]+/){1,}' | sed -
 # 初始化脚本缓存目录
 [ ! -d "${project_env_dir}/${project_group_name/\//_}" ] && mkdir -p "${project_env_dir}/${project_group_name/\//_}"
 # 缓存文件
-cache_file=${project_env_dir}/${project_group_name/\//_}/$(basename ${0}).cache
+cache_file=${project_env_dir}/${project_group_name/\//_}/${program_file_name}.cache
 # 项目环境变量
-project_env_file=${project_env_dir}/${project_group_name/\//_}/$(basename ${0}).env
+project_env_file=${project_env_dir}/${project_group_name/\//_}/${program_file_name}.env
 # 加载项目环境变量
 [ -f "${project_env_file}" ] && source "${project_env_file}"
 #========================================
@@ -57,6 +61,10 @@ tag=${tag:-v1.5.0}
 
 # 后端打包基础镜像
 base_image=${base_image}
+# 后端打包命令额外参数
+mvn_extra_param=${mvn_extra_param}
+# 后端打包方式，dockerBuild-打包到本地镜像库，build-打包到远程镜像库
+mvn_build_method=${mvn_build_method:-build}
 
 # 定义环境分支名称
 dev_branch=${dev_branch:-dev-latest}
@@ -108,7 +116,7 @@ front_server_address=${front_server_address}
 front_server_user=${front_server_user:-root}
 front_server_dir=$(test -n "${front_server_dir}" && cat ${project_env_file} | grep front_server_dir | cut -d'=' -f2 | head -1 | sed -e 's/\$/\$/g' || echo -n "/home/web-front/\$(date +%y%m%d%H%M)")
 
-# 前端模块名称，git仓库中的名称
+# 前端项目名称，git仓库中的名称
 front_module_name=${front_module_name:-front}
 # 前端编译目标文件夹
 front_local_dirname=${front_local_dirname:-dist}
@@ -130,6 +138,19 @@ apollo_appid=${apollo_appid}
 apollo_namespace=${apollo_namespace}
 apollo_cluster=${apollo_cluster}
 
+# 使用远程服务器来编译和发布，不占用本地资源
+remote_publish_enabled=${remote_publish_enabled:-false}
+# 远程服务器地址
+remote_server_address=${remote_server_address}
+# 远程服务器ssh端口
+remote_server_port=${remote_server_port:-22}
+# 远程服务器用户
+remote_server_user=${remote_server_user:-root}
+# 远程服务器目录，用于存在发布的代码
+remote_server_dir='${remote_server_dir:-/root/publish}'
+# 邮箱地址，远程发布成功之后，会将结果发送至该邮箱
+remote_publish_email=${remote_publish_email}
+
 # 回调函数，脚本发布到镜像库结束时的回调
 # on_finally='${on_finally:-[ -f config/config.js.packing ] && mv -f config/config.js.packing config/config.js}'
 # 回调函数，在前端代码编译之前的回调
@@ -137,18 +158,21 @@ apollo_cluster=${apollo_cluster}
 
 EOF
 
-	exit 1
+	exit 0
 fi
 
 arg1=${1}
 arg2=${2}
+arg3=${3}
 environment=${arg1}
 # 当前时间
 now=`date +%Y%m%d%H%M`
+# 当前计算机名
+computer_name="$(uname -n)"
 # 当前分支
-now_branch=`git branch 2> /dev/null | awk '/^\*/{print$2}'`
+current_branch=`git branch 2> /dev/null | awk '/^\*/{print$2}'`
 # 根据时间设置暂存区名称
-stash_save_name=${now_branch}-`date +%Y%m%d%H%M`
+stash_save_name=${current_branch}-`date +%Y%m%d%H%M`
 # 是否暂存，1为否
 stash_saved=1
 # 镜像仓库地址
@@ -167,6 +191,11 @@ rancher_project_id=""
 rancher_namespace=""
 artifact_id=""
 version=""
+remote_server_userdir=""
+workload=""
+image_name=""
+image_name_is_set=""
+rancher_up_status=""
 
 function load_apollo_config() {
 
@@ -177,6 +206,7 @@ function load_apollo_config() {
 	local apollo_namespace=${apollo_namespace:-application}
 	eval "`curl -s ${apollo_url}/configfiles/${apollo_appid}/${apollo_cluster}/${apollo_namespace}`"
 	[ $? -ne 0 ] && echo "apollo配置加载失败！" 
+	sleep 1
 
 }
 
@@ -187,31 +217,62 @@ function parse_str() {
 
 }
 
+# 去掉文件中的^M
+function dos2unix() {
+
+	[ -z "${1}" -o ! -f "${1}" ] && return
+	mv -f "${1}" "${1}.tmp"
+	cat "${1}.tmp" | tr -d '\r' > "${1}"
+	rm -rf "${1}.tmp"
+
+}
+
+function get_env_by_branch() {
+
+	if [ -n "`echo ${base_branch} | grep "${dev_branch}"`" ]; then
+		environment="dev"
+	elif [ -n "`echo ${base_branch} | grep "${uat_branch}"`" ]; then
+		environment="uat"
+	elif [ -n "`echo ${base_branch} | grep "${prod_branch}"`" ]; then
+		environment="prod"
+	else 
+		environment="dev"
+	fi
+
+}
+
 function parse_variables() {
 
 	case "$arg1" in
 	    "dev"|"uat"|"prod") 	
-				base_branch=`eval echo '$'"${environment}_branch"`
+				base_branch=`parse_str "${environment}_branch"`
 				;;
-	    *)
-				[ -n "$arg1" -a "$arg1" != "now" ] && base_branch="$arg1" || base_branch=${now_branch}
-				if [ -n "$arg2" ]; then
-					environment="$arg2" 
+	    "-c")
+				base_branch=${current_branch}
+				if [ -n "${arg2}" ]; then
+					environment="${arg2}" 
 				else
-					if [ -n "`echo ${base_branch} | grep "${dev_branch}"`" ]; then
-						environment="dev"
-					elif [ -n "`echo ${base_branch} | grep "${uat_branch}"`" ]; then
-						environment="uat"
-					elif [ -n "`echo ${base_branch} | grep "${prod_branch}"`" ]; then
-						environment="prod"
-					else 
-						environment="dev"
-					fi
+					get_env_by_branch
 				fi
+				# 重制一下参数，便于远程发布
+				arg1="-b"
+				arg2="${base_branch}"
+				arg3="${environment}"
 	    	;;
+	    "-b")
+				base_branch=${arg2}
+				if [ -n "${arg3}" ]; then
+					environment="${arg3}"
+				else
+					get_env_by_branch
+				fi
+				;;
+			"*")
+				# todo show help
+				echo hello
+				;;
 	esac	
 	
-	version=${tag}-${environment}-${now}
 	server=`parse_str "${environment}_server"`
 	username=`parse_str "${environment}_username"`
 	password=`parse_str "${environment}_password"`
@@ -221,10 +282,16 @@ function parse_variables() {
 	rancher_project_id=`parse_str "${environment}_rancher_project_id"`
 	rancher_namespace=`parse_str "${environment}_rancher_namespace"`
 
+	version="${tag}-${environment}-${now}"
+	remote_server_userdir="${remote_server_dir}/${computer_name}"
+
 	if [ -z "${server}" ]; then
 		echo "变量${environment}_server不能为空！"
-		exit 1
+		finally 1
 	fi
+
+	# 加载远程发布环境变量
+	[ -f ../remote_publish.env ] && source ../remote_publish.env
 
 }
 
@@ -243,7 +310,7 @@ function get_full_image_name() {
 		image_full_name=${server}${registry_extra_path}/${front_module_name}
 	else
 		artifact_id="$(get_xml_value ./pom.xml artifactId)"
-		[ -z "${artifact_id}" ] && echo "获取artifactId失败！" && exit 1
+		[ -z "${artifact_id}" ] && echo "获取artifactId失败！" && finally 1
 		image_full_name=${server}${registry_extra_path}/${artifact_id}
 	fi
 
@@ -251,14 +318,13 @@ function get_full_image_name() {
 
 function prepare() {
 
-	clear
 	echo "开始打包发布镜像到${environment:-dev}镜像库..."
 	sleep 1
 
-	if [ "${base_branch}" != "${now_branch}" ]; then
+	if [ "${base_branch}" != "${current_branch}" ]; then
 
 		git stash save ${stash_save_name}
-		[ $? -ne 0 ] && echo "暂存代码失败！" && exit 1
+		[ $? -ne 0 ] && echo "暂存代码失败！" && finally 1
 		if git stash list | grep "${stash_save_name}" &> /dev/null; then 
 			stash_saved=0
 			echo "未提交的代码已放入暂存区${stash_save_name}..."
@@ -271,16 +337,17 @@ function prepare() {
 	fi
 
 	echo "更新${base_branch}分支代码..."
-	git pull origin ${base_branch} --no-edit
+	git pull origin ${base_branch} -q
 
 	cat << EOF
 ======= 配置信息 =======
-当前模块: ${project_name}
-当前分支: ${now_branch}
+当前项目: ${project_name}
+当前分支: ${current_branch}
 打包分支: ${base_branch}
 镜像库地址: ${server}
 镜像库用户: ${username}
 使用http: ${over_http}
+镜像版本: ${version}
 =======================
 EOF
 	if [ "${skip_verify}" != "true" ]; then
@@ -326,6 +393,44 @@ function cache() {
 
 }
 
+function get_workload_info() {
+
+	[ "${rancher_deploy}" != "true" ] && return
+
+	if [ -n "${workload}" -a -n "${image_name}" ]; then
+		image_full_name="${image_name}"
+		return
+	fi
+
+	# 获取工作负载名称
+	workload=$(cache get workload)
+	if [ -z "${workload}" ]; then
+		echo "> 默认工作负载名称：${project_name}"
+		read -p "请输入Rancher中的工作负载名称：" workload
+		[ -z "$workload" ] && workload=${project_name}
+		cache set workload "${workload}"
+		workload_is_set="1"
+	fi
+	# 获取镜像名称
+	image_name=$(cache get image_name)
+	if [ -z "${image_name}" ]; then
+		echo "> 默认镜像名称：${image_full_name}"
+		read -p "手动输入镜像名称[不带tag][不输入则自动拼接]：" image_name
+		if [ -n "${image_name}" ]; then
+			image_full_name="${image_name}"
+			cache set image_name "${image_name}"
+		else
+			# 输入为空则让工作负载每次都自动获取
+			echo "> 镜像名称设置为自动识别，以后不再提醒！"
+			cache set image_name auto
+		fi
+		image_name_is_set="1"
+	elif [ "${image_name}" != "auto" ]; then
+		image_full_name="${image_name}"
+	fi
+	[ "${workload_is_set}" = "1" -o "${image_name_is_set}" = "1" ] && echo "> 缓存文件: ${cache_file}"
+}
+
 function upgrade_service() {
 
 	# Rancher升级
@@ -347,42 +452,7 @@ function upgrade_service() {
 			echo "=== 请选择工作负载所在的项目 ==="
 			rancher login "${rancher_url}" --token "${rancher_token}" --skip-verify --name "${environment}"
 		fi
-		# 获取工作负载名称
-		workload=$(cache get workload)
-		while true; do
-			if [ -z "${workload}" ]; then
-				echo "> 默认工作负载名称：${project_name}"
-				read -p "请输入Rancher中的工作负载名称：" workload
-				[ -z "$workload" ] && workload=${project_name}
-				if [ -z "$(rancher kubectl get deploy -n "${rancher_namespace}" | grep -E "^${workload} ")" ]; then
-					echo "> 在命名空间${rancher_namespace}中未找到工作负载${workload}！"
-					# 未找到工作负载，重新输入
-					workload=""
-					continue
-				fi
-				cache set workload "${workload}"
-				workload_is_set="1"
-			else
-				break
-			fi
-		done
-		# 获取镜像名称
-		image_name=$(cache get image_name)
-		if [ -z "${image_name}" ]; then
-			echo "> 默认镜像名称：${image_full_name}"
-			read -p "手动输入镜像名称[不带tag][不输入则自动拼接]：" image_name
-			if [ -n "${image_name}" ]; then
-				image_full_name="${image_name}"
-				cache set image_name "${image_name}"
-			else
-				# 输入为空则让工作负载每次都自动获取
-				echo "> 镜像名称设置为自动识别，以后不再提醒！"
-				cache set image_name auto
-			fi
-			image_name_is_set="1"
-		elif [ "${image_name}" != "auto" ]; then
-			image_full_name="${image_name}"
-		fi
+
 		cat << EOF
 ======= 升级信息 =======
 服务端地址: ${environment}-${rancher_url}
@@ -407,63 +477,44 @@ EOF
 
 }
 
-function finally() {
-
-	echo "还原分支中..."
-	
-	if [ "${now_branch}" != "${base_branch}" ]; then
-		git checkout ${now_branch}
-		if [ "${stash_saved}" -eq 0 ]; then
-			echo "恢复暂存区${stash_save_name}代码..."
-			stash_save_code=$(git stash list | grep "${stash_save_name}" | cut -d':' -f1)
-			if [ -z "${stash_save_code}" ]; then
-				echo "暂存区代码未找到！"
-			else
-				git stash apply "${stash_save_code}"
-			fi
-		fi
-	fi
-
-	[ -n "${on_finally}" ] && eval "${on_finally}"
-	echo "push tag: $version"
-
-}
-
 function front_build() {
 
 	echo "本地编译代码..."
+
+	hash yarn && yarn install || npm install 
 	
-	[ -n "${on_front_build}" ] && eval "${on_front_build}"
+	[ -n "${on_front_build}" ] && eval "${on_front_build}" > /dev/null
+
 	# 先删除以前的编译文件
 	# [ -n "${front_local_dirname}" -a -d "${front_local_dirname}" ] && rm -rf "${front_local_dirname}"
-	[ -n "${front_build_cmd}" ] && eval "${front_build_cmd}" > /dev/null || npm run build > /dev/null
-	[ $? -ne 0 ] && echo "代码编译失败，停止发布！" && finally && exit 1
+	[ -n "${front_build_cmd}" ] && eval "${front_build_cmd}" &> /dev/null || npm run build &> /dev/null
+	[ $? -ne 0 ] && echo "代码编译失败，停止发布！" && finally 1
 	# 消除颜色
-	echo -e "\033[0m"
+	# echo -e "\033[0m"
 
 }
 
 function front_local_push() {
 
 	echo "开始本地发布镜像..."
-	! hash docker &> /dev/null && echo "检测到Docker程序未安装！" && finally && exit 1
+	! hash docker &> /dev/null && echo "检测到Docker程序未安装！" && finally 1
 	if [ -z "${front_local_pack_dir}" -o ! -d "${front_local_pack_dir}" ]; then
 		echo "请配置或创建本地打包目录！"
-		finally && exit 1
+		finally 1
 	elif [ "${front_local_pack_dir}" != "." -a "${front_local_pack_dir}" != "./" ]; then
 		[ ! -d "${front_local_pack_dir}" ] && mkdir -p ${front_local_pack_dir}
 		rm -rf ${front_local_pack_dir}/${front_local_dirname}
 		cp -r ${front_local_dirname} ${front_local_pack_dir}
 		cp -r ${front_docker_files} ${front_local_pack_dir}
 	fi
-	docker login ${server} -u ${username} -p ${password}
+	docker login ${server} -u ${username} -p ${password} &> /dev/null
 	docker build -t ${image_full_name}:${version} ${front_local_pack_dir}
 	docker push ${image_full_name}:${version}
 	if [ "${push_latest_tag}" = "true" ]; then
 		docker tag ${image_full_name}:${version} ${image_full_name}:latest
 		docker push ${image_full_name}:latest
 	fi
-	[ $? -ne 0 ] && echo "代码打包或发布异常！" && finally && exit 1
+	[ $? -ne 0 ] && echo "代码打包或发布异常！" && finally 1
 
 }
 
@@ -474,17 +525,17 @@ function front_online_push() {
 	# 创建临时文件夹打包镜像
 	ssh ${front_server_user}@${front_server_address} \
 		"mkdir -p ${front_server_dir}"
-	[ $? -ne 0 ] && echo "远程打包文件夹创建失败！" && finally && exit 1 
+	[ $? -ne 0 ] && echo "远程打包文件夹创建失败！" && finally 1
 
 	echo "上传docker打包文件..."
 	scp -r ${front_docker_files} ${front_server_user}@${front_server_address}:${front_server_dir} > /dev/null
 	echo "上传前端代码中..."
 	local front_local_basename="$(basename ${front_local_dirname})"
 	tar zcvf ${front_local_basename}.tar.gz -C ${front_local_dirname} . &> /dev/null
-	[ $? -ne 0 ] && echo "前端代码压缩失败！" && finally && exit 1
+	[ $? -ne 0 ] && echo "前端代码压缩失败！" && finally 1
 	# 开始上传前端文件
 	scp -r ${front_local_basename}.tar.gz ${front_server_user}@${front_server_address}:${front_server_dir} > /dev/null
-	[ $? -ne 0 ] && echo "代码上传失败，停止发布！" && finally && rm -rf ${front_local_basename}.tar.gz && exit 1
+	[ $? -ne 0 ] && echo "代码上传失败，停止发布！" && rm -rf ${front_local_basename}.tar.gz && finally 1
 	# 清理临时文件
 	rm -rf ${front_local_basename}.tar.gz
 	# 解压前端文件
@@ -497,7 +548,7 @@ function front_online_push() {
 		"docker login ${server} -u ${username} -p ${password} && \
 		docker build -t ${image_full_name}:${version} ${front_server_dir} && \
 		docker push ${image_full_name}:${version}"
-	[ $? -ne 0 ] && echo "代码发布异常！" && finally && exit 1
+	[ $? -ne 0 ] && echo "代码发布异常！" && finally 1
 	if [ "${push_latest_tag}" = "true" ]; then
 		ssh ${front_server_user}@${front_server_address} \
 			"docker tag ${image_full_name}:${version} ${image_full_name}:latest && \
@@ -512,23 +563,25 @@ function spring_boot_push() {
 	local build_result=0
 	#jib:dockerBuild 可使用本地docker编译，不发布到远程镜像库
 	# mvn dependency:resolve -U > /dev/null
-	mvn compile jib:build -Dbase_image="${base_image}" \
+	mvn compile jib:${mvn_build_method} \
+		-Dbase_image="${base_image}" \
 		-Dregistry_url="${server}" \
 		-Dregistry_username="${username}" \
 		-Dregistry_password="${password}" \
 		-Dimage_tag="${version}" \
-		-DsendCredentialsOverHttp="${over_http}"
+		-DsendCredentialsOverHttp="${over_http}" "${mvn_extra_param}" 
 	build_result=$?
 	if [ "${push_latest_tag}" = "true" ]; then
-		mvn compile jib:build -Dbase_image="${base_image}" \
+		mvn compile jib:build \
+			-Dbase_image="${base_image}" \
 			-Dregistry_url="${server}" \
 			-Dregistry_username="${username}" \
 			-Dregistry_password="${password}" \
 			-Dimage_tag="latest" \
-			-DsendCredentialsOverHttp="${over_http}"
+			-DsendCredentialsOverHttp="${over_http}" "${mvn_extra_param}" 
 		build_result=$?
 	fi
-	[ "${build_result}" -ne 0 ] && echo "代码编译失败，停止发布！" && finally && exit 1
+	[ "${build_result}" -ne 0 ] && echo "代码编译失败，停止发布！" && finally 1
 
 }
 
@@ -543,13 +596,121 @@ function auto_build_and_push() {
 		elif [ "${front_pack_method}" = "local" ]; then
 			front_local_push
 		else 
-			echo "前端打包方式配置错误！" && finally && exit 1
+			echo "前端打包方式配置错误！" && finally 1
 		fi
 	else 
 		spring_boot_push
 	fi
 
-	finally
+}
+
+function remote_publish_prepare() {
+
+	[ "${remote_publish_enabled}" != "true" ] && return
+
+	echo "在远程服务器上发布代码到${environment}环境..."
+
+	# [ "${skip_verify}" != "true" ] && read -p "是否自动发布到rancher？[y/n]: " res || res="y"
+	# [ "${res}" = "y" ] && rancher_deploy="true" || rancher_deploy="false"
+
+	local remote_log_file_path=${remote_server_userdir}/log/${program_file_name}_${project_name}.log
+
+	ssh -p "${remote_server_port}" "${remote_server_user}@${remote_server_address}" "[ ! -d ${remote_server_userdir} ] && mkdir -p ${remote_server_userdir}/.project/${project_group_name/\//_}"
+	scp -P "${remote_server_port}" -r "${program_file_path}" "${remote_server_user}@${remote_server_address}:${remote_server_userdir}" &> /dev/null
+	scp -P "${remote_server_port}" -r "${cache_file}" "${remote_server_user}@${remote_server_address}:${remote_server_userdir}/.project/${project_group_name/\//_}" &> /dev/null
+	scp -P "${remote_server_port}" -r "${project_env_file}" "${remote_server_user}@${remote_server_address}:${remote_server_userdir}/.project/${project_group_name/\//_}" &> /dev/null
+
+	ssh -p "${remote_server_port}" "${remote_server_user}@${remote_server_address}" << EOF
+
+#!/bin/bash
+
+! hash git 2> /dev/null && echo "请在服务器上安装git！" && exit 1
+! hash mvn 2> /dev/null && echo "请在服务器上安装maven！" && exit 1
+! hash npm 2> /dev/null && echo "请在服务器上安装npm！" && exit 1
+
+export project_env_dir=${remote_server_userdir}/.project
+export TERM=xterm-256color
+
+if grep "${project_name}" ${remote_server_userdir}/publishing.txt > /dev/null; then 
+	echo "项目${project_name}正在发布中！"
+	echo "> [谨慎]重置发布状态: echo -n > ${remote_server_userdir}/publishing.txt"
+	exit 1
+fi
+
+echo "服务器名: \$(uname -n), 代码发布中..."
+
+# 设置发布状态
+echo "${project_name}" >> ${remote_server_userdir}/publishing.txt
+
+[ ! -d "${remote_server_userdir}/log" ] && mkdir -p "${remote_server_userdir}/log"
+
+cd "${remote_server_userdir}"
+
+[ ! -d "${project_name}" ] && git clone "${git_remote_url}"
+[ $? -ne 0 ] && echo "代码下载失败！" && exit 1
+
+	# 初始化变量，用于远程发布，高优先级
+	cat > "${remote_server_userdir}/remote_publish.env" << eeooff
+front_pack_method=local
+remote_publish_enabled=false
+front_local_pack_dir=.
+skip_verify=true
+remote_publishing=true
+remote_server_userdir=${remote_server_userdir}
+project_env_dir=${remote_server_userdir}/.project
+eeooff
+
+cd "${project_name}"
+
+../${program_file_name} ${arg1} ${arg2} ${arg3} &> ${remote_log_file_path} &
+
+echo "> 服务器日志文件: ${remote_log_file_path}"
+
+EOF
+
+	exit 0
+}
+
+function send_email() {
+
+	echo "发布完成，发送邮件通知..."
+
+	local result_msg="成功"
+	local remote_log_file_path=${remote_server_userdir}/log/${program_file_name}_${project_name}.log
+
+	[ "${1}" -ne 0 ] && result_msg="失败"
+
+	# dos2unix "${remote_log_file_path}" 
+
+	mail -s "[${program_file_name}]项目${project_name}发布到${environment}${result_msg}！" "${remote_publish_email}" < "${remote_log_file_path}"
+
+}
+
+function finally() {
+
+	echo "还原分支中..."
+	
+	if [ "${current_branch}" != "${base_branch}" ]; then
+		git checkout ${current_branch} &> /dev/null
+		if [ "${stash_saved}" -eq 0 ]; then
+			echo "恢复暂存区${stash_save_name}代码..."
+			stash_save_code=$(git stash list | grep "${stash_save_name}" | cut -d':' -f1)
+			if [ -z "${stash_save_code}" ]; then
+				echo "暂存区代码未找到！"
+			else
+				git stash apply "${stash_save_code}"
+			fi
+		fi
+	fi
+
+	if [ "${remote_publishing}" = "true" ]; then
+		sed -i "/${project_name}/d" ../publishing.txt
+		send_email "${1}"
+	fi
+
+	[ -n "${on_finally}" ] && eval "${on_finally}"
+
+	exit
 
 }
 
@@ -561,14 +722,19 @@ function main_process() {
 
 	get_full_image_name
 
+	get_workload_info
+
+	remote_publish_prepare
+
 	prepare
 
 	auto_build_and_push
 
 	upgrade_service
 
+	finally 0
+
 }
 
 main_process
 
-exit 0
